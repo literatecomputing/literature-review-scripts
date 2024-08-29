@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+# Retrieve a file from Wiley using the TDM API given a DOI
+if [[ -z $WILEY_TDM_CLIENT_TOKEN ]]
+then
+  echo "WILEY_TDM_CLIENT_TOKEN not set"
+  echo "See https://onlinelibrary.wiley.com/library-info/resources/text-and-datamining for more information"
+  exit 1
+fi
+header_file=$(mktemp)
+DOI=$1
+filename=$DOI.pdf
+mkdir -p $(dirname $DOI)
+echo Getting $filename
+if [[ -f $filename ]]
+then
+  echo have $filename
+  exit
+fi
+curl -s -L -H "Wiley-TDM-Client-Token: $WILEY_TDM_CLIENT_TOKEN" -D $header_file https://api.wiley.com/onlinelibrary/tdm/v1/articles/$DOI -o $filename
+while ! file -b --mime-type $filename|grep -q pdf
+do
+  echo $filename is bad. Sleeping
+  if (head -1 $header_file |grep -q 404)
+  then
+    echo "$DOI not found"
+    exit
+  fi
+  cat $filename
+  rm $filename
+  sleep 10
+  curl -s -L -H "Wiley-TDM-Client-Token: $WILEY_TDM_CLIENT_TOKEN" -D $header_file https://api.wiley.com/onlinelibrary/tdm/v1/articles/$DOI -o $filename
+  break
+done
+file $filename
+random_seconds=$(( RANDOM % 15 + 5 ))
+echo sleeping $random_seconds
+sleep $random_seconds
