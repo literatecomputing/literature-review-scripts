@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+header_file=$(mktemp)
+DOI=$1
+filename=$DOI.pdf
+mkdir -p $(dirname $DOI)
+curl -L -iH "Accept: application/vnd.crossref.unixsd+xml" http://dx.doi.org/$DOI
+exit
+
+do
+# Define the URL
+original_url=$x
+converted_url=$(echo "$original_url" | sed 's|http://www.jstor.org/stable/|http://www.jstor.org/stable/pdf/|')
+
+# Replace the last portion of the URL with the PDF filename
+converted_url=$(echo "$converted_url" | sed 's|/stable/|/stable/|')
+converted_url="${converted_url}.pdf"
+filename=$(basename "$converted_url")
+curl $converted_url -L -D $header_file
+
+done

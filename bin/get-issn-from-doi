@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+if [ -z "$1" ]; then
+    echo "Usage: $0 DOI"
+    exit 1
+fi
+if [ -z "$CROSSREF_EMAIL" ]; then
+    echo "Please set the CROSSREF_EMAIL environment variable"
+    exit 1
+fi
+json=$(curl -s "https://api.crossref.org/works/$DOI?mailto=$CROSSREF_EMAIL")
+# Two DOIs are returned one for print and one for online. Hope the first one is the right one
+echo $json|jq -r .message.ISSN[0]
+

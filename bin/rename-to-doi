@@ -1,0 +1,53 @@
+#!/usr/bin/env bash
+if [ -z "$CROSSREF_EMAIL" ]; then
+  echo "You must set the CROSSREF_EMAIL environment variable to your email address"
+  exit 1
+fi
+
+# rename a pdf file to the DOI with slashes replaced by underscores
+# consider adding parameter to specify destination directory
+DESTINATION="."
+mkdir -p $DESTINATION
+
+for item in "$@"; do
+  DOI_BASE=$(pwd | awk -F/ '{print $NF}')
+  DOI_END=$(basename $item .pdf)
+  DOI="$DOI_BASE/$DOI_END"
+  FILE_DOI="$DOI_BASE"_"$DOI_END"
+  #echo "$item" -- Getting "https://api.crossref.org/works/$DOI?mailto=$CROSSREF_EMAIL"
+  json=$(curl -s "https://api.crossref.org/works/$DOI?mailto=$CROSSREF_EMAIL")
+  author=$(echo $json|jq -r '.message.author[0].family')
+  journal=$(echo $json|jq -r '.message."short-container-title" |.[]')
+  case $journal in
+    "International Multilingual Research Journal")
+      journal="IMRJ"
+      ;;
+    "Language Learning")
+      journal="LL"
+      ;;
+    "The Modern Language Journal")
+      journal="MLJ"
+      ;;
+    "Journal of Sociolinguistics")
+      journal="J Sociolinguistics"
+      ;;
+    "Int J App Linguistics")
+      journal="IJAL"
+      ;;
+    "World Englishes")
+      journal="WE"
+      ;;
+    "TESOL Quarterly")
+      journal="TQ"
+      ;;
+    "TESOL Journal")
+      journal="TJ"
+      ;;
+    "TESOL J")
+      journal="TJ"
+      ;;
+  esac
+  year=$(echo $json|jq -r '.message."journal-issue"."published-print"."date-parts"[0][0]')
+  #echo "$item --> $year-$author-$journal-$DOI.pdf"
+  cp -uv $item "$DESTINATION/$year-$author-$journal-$FILE_DOI.pdf"
+done
