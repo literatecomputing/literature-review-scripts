@@ -1,0 +1,75 @@
+#!/usr/bin/env bash
+# take a list of pdf files and rename them according to the DOI
+# Zotero will also rename files according to the DOI, but it uses full author names, year, full title, which is a bit long for my taste
+# Requires pdftotext, jq, and curl. According to Github Copilot, on a Mac, you can install these with brew install poppler jq curl
+# https://support.datacite.org/docs/datacite-doi-display-guidelines suggests that "DOI: 10.1234/5678" is not recommended for displaying DOIs, so maybe we should search for https://doi.org/10. instead of just DOI:
+# This works on virtually every PDF I've downloaded in 2024 and almost none from a decade before. 
+# This might be a more rubust way to get the DOI: https?:\/\/.*?doi\.org\/(10\.[0-9]*?\/.*)\s|DOI:?\s?(10\..*?\/.*?)\s
+# It'll find old-style DOIs like DOI: 10.1002/2017GL074677 or new-style DOIs like https://doi.org/10.1002/2017GL074677 
+if [ -z "$CROSSREF_EMAIL" ]; then
+  echo "You must set the CROSSREF_EMAIL environment variable to your email address."
+  echo "See 'Etiquette' in https://www.crossref.org/documentation/retrieve-metadata/rest-api/ for more information."
+  exit 1
+fi
+if ! command -v pdftotext &> /dev/null
+then
+    echo "pdftotext is missing. Please install poppler-utils or on a mac 'brew install poppler'"
+    exit
+fi
+if ! command -v jq &> /dev/null
+then
+    echo "jq is missing. Please install jq or on a mac 'brew install jq'"
+    exit
+fi
+if ! command -v curl &> /dev/null
+then
+    echo "curl is missing. Please install curl or on a mac 'brew install curl'"
+    exit
+fi
+
+get_doi_from_pdf_file() {
+  local pdf="$1"
+  # pdftotext: get first page of PDF
+  # tr: replace newlines with spaces (sometimes a newline will break the between DOI: and DOI or break DOI into two lines)
+  # sed: replace slash-space with slash (sometimes the DOI is split at the slash which we replaced with a space)
+  # grep: get the line with the DOI (but that's the whole thing?
+  # awk: split the line at DOI:, leaving the DOI and the rest of the line
+  # awk: get just the first word (the DOI)
+  pdftotext "$pdf" -l 1  -  |tr '\n' ' ' | sed 's|/ |/|' | grep DOI:| awk -F 'DOI: ' '{print $2}' | awk '{print $1}'
+}
+
+get_doi_url_from_pdf_file() {
+  local pdf="$1"
+  # pdftotext: get first page of PDF
+  # tr: replace newlines with spaces (sometimes a newline will break the between DOI: and DOI or break DOI into two lines)
+  # sed: replace slash-space with slash (sometimes the DOI is split at the slash which we replaced with a space)
+  # grep: get the line with the DOI (but that's the whole thing?
+  # awk: split the line at DOI:, leaving the DOI and the rest of the line
+  # awk: get just the first word (the DOI)
+  pdftotext "$pdf" -l 1  -  |tr '\n' ' ' | sed 's|/ |/|' | grep DOI:| awk -F 'DOI: ' '{print $2}' | awk '{print "https://doi.org/"$1}'
+
+}
+
+for item in "$@"; do
+  DOI=$(get_doi_from_pdf_file "$item")
+  FILE_DOI=$(echo $DOI|sed 's|/|_|g')
+  echo "$item" -- Getting "https://api.crossref.org/works/$DOI?mailto=$CROSSREF_EMAIL"
+  json=$(curl -s "https://api.crossref.org/works/$DOI?mailto=$CROSSREF_EMAIL")
+  author=$(echo $json|jq -r '.message.author[0].family')
+  journal=$(echo $json|jq -r '.message."short-container-title" |.[]')
+  title=$(echo $json|jq -r '.message.title | .[]')
+  # first five words of title
+  short_title=$(echo $title|awk '{print $1, $2, $3, $4, $5 } '|sed 's| |_|g')
+  # first letter of first five words of title (lowercase)
+  abbr_title=$(echo "$title" | awk '{for(i=1;i<=5;i++) printf "%s", substr($i,1,1)}' | tr '[:upper:]' '[:lower:]')
+  # make short_journal be the first letter of each word in the journal name
+  short_j=$(echo $journal|awk '{for(i=1;i<=NF;i++) printf "%s", substr($i,1,1)}')
+  year=$(echo $json|jq -r '.message."journal-issue"."published-print"."date-parts"[0][0]')
+  echo "$item --> $year-$author-$journal-$DOI.pdf"
+  if [[ -f "$year-$author-$short_j-$FILE_DOI.pdf" ]]; then
+    echo "File $year-$author-$short_j-$FILE_DOI.pdf already exists. Skipping $item"
+    continue
+  fi
+  echo "going to rename to '$year-$author-$short_j-$FILE_DOI.pdf'"
+  mv -uvn "$item" "$year-$author-$short_j-$FILE_DOI.pdf"
+done
