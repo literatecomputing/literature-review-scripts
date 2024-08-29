@@ -1,0 +1,100 @@
+#!/usr/bin/env bash
+# Open a file assuming each line is a TandF DOI and open it in the browser
+# Use this script to download just a few PDFs from TandF journals via your browser
+# If you need more than a couple hundred, contact your librarian for assistance. It's worth it.
+# You can set things up so that you can skip using the web browser and just curl or wget the files
+# works for macOS and Linux
+# T_AND_F_HOSTNAME="https://www.tandfonline.com" # if you don't have academic library access
+# TODO: remove articles (and, of, an, the, and worst of all "&" etc.) from the journal title
+T_AND_F_HOSTNAME="https://www-tandfonline-com.$PROXY_SUFFIX"
+SLEEP_SECONDS=1
+DELAY_AFTER_COUNT=60 # Adjust as needed
+
+# Get the operating system name
+os_name=$(uname)
+
+# Check if the OS is macOS or Linux
+if [ "$os_name" == "Darwin" ]; then
+  OPEN="open"
+elif [ "$os_name" == "Linux" ]; then
+  OPEN="xdg-open"
+else
+  echo "Unknown operating system (presumably windows): $os_name. "
+  echo "You need python3 installed to run this script."
+  OPEN="python3 -m webbrowser"
+fi
+
+# add command line option -n to skip opening the browser
+while getopts "vnd:" opt; do
+  case ${opt} in
+    n )
+      OPEN="echo"
+      ;;
+    \? )
+      echo "Usage: $0 [-n -v -d <seconds>] filename"
+      exit 1
+      ;;
+    # option -d to set delay after each download
+    d )
+      SLEEP_SECONDS=$OPTARG
+      ;; 
+    # option -v to add extra verbosity
+    v )
+      VERBOSE=1
+      ;;
+  esac
+done
+
+shift $((OPTIND -1))
+
+# Check if a file is provided as a command-line argument
+if [ $# -eq 0 ]; then
+  echo "Usage: $0 filename"
+  exit 1
+fi
+
+# File provided as the first argument
+file=$1
+
+# Check if the file exists
+if [ ! -f "$file" ]; then
+  echo "$file not found!"
+  exit 1
+fi
+
+if [[ $VERBOSE ]]; then
+  echo "Opening: $file"
+fi
+
+# Loop through each line of the file
+count=0
+while IFS= read -r line; do
+  # strip trailing DOS newline characters
+  line=$(echo $line | sed 's/\r$//')
+  # Process each line
+  if [[ $line == 10.* ]]; then
+    if [[ $VERBOSE ]]; then
+      echo "Processing DOI: $line"
+    fi
+    DOI_CLEAN=$(echo $line | sed 's/\//_/g')   
+    matches=$(find "." -type f -name "*$DOI_CLEAN.pdf")
+    # if the file already exists (in matches), skip it  
+    if ! [[ -z "$matches" ]]; then
+      if [[ $VERBOSE ]]; then
+        echo "Found $matches. Skipping $line"
+      fi
+      continue
+    fi
+    $OPEN $T_AND_F_HOSTNAME/doi/pdf/$line?download=true
+    ((count++))
+    sleep $SLEEP_SECONDS
+  else  
+    echo "$line does not look like a DOI. Skipping."
+  fi
+  # Pause every DELAY_AFTER_COUNT iterations
+  if (( count % DELAY_AFTER_COUNT == 0 )); then
+    echo "processed $count DOIs. Sleeping for $DELAY_AFTER_COUNT seconds."
+    sleep $DELAY_AFTER_COUNT  
+  fi  
+done < "$file"
+echo "Done! Consider running 'normalize-filename *pdf' to rename the files to something more useful."
