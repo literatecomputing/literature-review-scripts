@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+# This script takes a list of doi's and opens them in the browser
+# works for doi's from Taylor and Francis
+# 
+T_AND_F_HOSTNAME="https://www-tandfonline-com.$PROXY_SUFFIX"
+ # check of DOI is provided 
+if [ "$#" -eq 0 ]; then
+  echo "No DOI provided"
+  exit 1
+fi
+# check if DOI starts with "10.1080"
+os_name=$(uname)
+# Check if the OS is macOS or Linux
+if [ "$os_name" == "Darwin" ]; then
+  OPEN="open"
+elif [ "$os_name" == "Linux" ]; then
+  OPEN="xdg-open"
+else
+  echo "Unknown operating system (presumably windows): $os_name. "
+  echo "You need python3 installed to run this script."
+  OPEN="python3 -m webbrowser"
+fi
+for x in "$@"
+do
+# check if DOI starts with "10.1080" or 10.1207
+# https://gist.github.com/TomDemeranville/8699224 suggests all informa publishers should be included, but these were all that was in my dataset
+  if [[ $x != 10.1080* ]] && [[ $x !=  10.1207* ]] && [[ $x != 10.2167* ]]; then
+    echo "DOI does not start with 10.1080, 10.2167, or 10.1207. Skipping $x"
+    continue
+  fi
+  # split $x at the last / and take the last part 
+  DOI_END=$(echo $x | awk -F/ '{print $NF}')
+  echo  "DOI_END: $DOI_END"
+  matches=$(find "." -type f -name "*$DOI_END.pdf")
+
+  if [[ -n $matches ]]; then
+    echo "Found $matches. Skipping $x"
+    continue
+  fi
+  $OPEN $T_AND_F_HOSTNAME/doi/pdf/$x?download=true &
+done

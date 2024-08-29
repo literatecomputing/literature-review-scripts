@@ -1,3 +1,4 @@
 *.pdf
 10.*
 my-data
+bin/deprecated/*
