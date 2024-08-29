@@ -1,0 +1,7 @@
+for file in *.pdf
+do
+  if (file -b --mime-type $file|grep json)
+  then
+    rm $file
+  fi
+done
