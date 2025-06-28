@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+# Usage: doi-get-article-counts <DOI>
+# Example: doi-get-article-counts 10.1007/s00125-020-05002-0
+# This script retrieves the number of articles published by a journal in each year
+# using the CrossRef API. It requires 'jq' and 'curl' to be installed.
+# Dependencies: jq, curl
+
+# Check if DOI is provided
+if [ -z "$1" ]; then
+  echo "Usage: $0 <DOI>"
+  echo "Example: $0 10.1007/s00125-020-05002-0"
+  echo -e "\nThis script retrieves the number of articles published by a journal in each year using the CrossRef API.\n"
+  echo "Dependencies: jq, curl"
+  exit 1
+fi
+DOI=$1
+json=$(curl -s https://api.crossref.org/works/$DOI)
+# fail if DOI not found
+if [ "$(echo $json | jq -r '.status')" != "ok" ]; then
+  echo "DOI not found: $DOI"
+  exit 1
+fi
+ISSN=$(echo $json | jq -r '.message.ISSN[0]')
+info=$(curl -s https://api.crossref.org/journals/$ISSN )
+title=$(echo $info |jq -r '.message.title')
+echo "$title ($ISSN)"
+echo $info | jq -r '.message.breakdowns["dois-by-issued-year"] | sort_by(.[0])[] | "\(.[])"' |
+paste - -

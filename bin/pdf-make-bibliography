@@ -1,0 +1,223 @@
+#!/usr/bin/env bash
+# get bibliography from file with a bunch of DOIs
+HTML=false
+FILES=()
+
+# Parse options and collect files
+while [[ "$#" -gt 0 ]]; do
+  case "$1" in
+    --html)
+      HTML=true
+      shift
+      ;;
+    *)
+      FILES+=("$1")
+      shift
+      ;;
+  esac
+done
+
+
+JABREF_CMD="jabref"
+
+# if this is a macOS system, add the path to JabRef, add the path to brew, 
+if [[ "$OSTYPE" == "darwin"* ]]; then
+  # check if brew bin diretory exists and is in path
+  if [[ -d "/opt/homebrew/bin" ]]; then
+    export PATH="/opt/homebrew/bin:$PATH"
+    if ! command -v pdftotext &> /dev/null; then
+      echo "pdftotext is missing. Please install poppler-utils or on a mac 'brew install poppler'"
+      brew install poppler
+    fi
+  else 
+    echo "Homebrew is not installed. Please install Homebrew from https://brew.sh/"
+    open "https://brew.sh/"
+    exit 1
+  fi
+  # check if /Library/TeX/texbin is in path
+  if [[ -d "/Library/TeX/texbin" && ":$PATH:" != *":/Library/TeX/texbin:"* ]]; then
+    export PATH="/Library/TeX/texbin:$PATH"
+  fi
+  # check if jabref is installed
+  if ! command -v /Applications/JabRef.app/Contents/MacOS/JabRef &> /dev/null; then
+    echo "JabRef is not installed. Please install JabRef"
+    open "https://docs.jabref.org/installation"
+    exit 1
+  fi
+  JABREF_CMD="/Applications/JabRef.app/Contents/MacOS/JabRef"
+  # Don't change directory - work with absolute paths instead
+fi
+
+if [[ ${#FILES[@]} -gt 0 ]]; then
+  FIRST_FILE="${FILES[0]}"
+  ABS_PATH=$(realpath "$FIRST_FILE")
+  ORIGINAL_DIR=$(dirname "$ABS_PATH")
+  DIR_NAME=$(basename "$ORIGINAL_DIR")
+  
+  # Create temporary directory for intermediate files
+  TMP_DIR="$ORIGINAL_DIR/tmp-bibliography"
+  mkdir -p "$TMP_DIR"
+  
+  OUTPUT_FILE="$TMP_DIR/${DIR_NAME}.tmp"
+  echo "output file: $OUTPUT_FILE" >&2
+  BIBTEX_FILE="${OUTPUT_FILE%.tmp}.bib"
+  
+  # Check if the first file is already a .bib file
+  if [[ "$FIRST_FILE" == *.bib ]]; then
+    echo "Input file is already a .bib file, skipping DOI processing" >&2
+    BIBTEX_FILE="$FIRST_FILE"
+  else
+    # Clear/create the output file
+    > "$OUTPUT_FILE"
+
+for file in "${FILES[@]}"; do
+  # Convert to absolute path
+  ABS_FILE_PATH=$(realpath "$file")
+  
+  # TODO? Use lesspipe to extract text -- but it doesn't work for txt?
+  # TEXT=$(lesspipe "$ABS_FILE_PATH" 2>/dev/null | head -50 | tr -d '\0')
+
+  # Extract DOI-like strings (10.xxxx/xxxxx) and deduplicate
+  #DOIS=$(echo "$TEXT" | grep -Eo '10\.[0-9]+/[A-Za-z0-9._;()/:+-]+' | sed 's/[),.;"]*$//' | sort -u)
+  DOI=$(pdftotext "$ABS_FILE_PATH" -l 1  -  |tr '\n' ' ' | sed 's|/ |/|' | grep -Eo '10\.[0-9]{4,9}/[a-zA-Z0-9/:._-]*'|tail -1 )
+
+    # skip this DOI if it exists in the output file
+  if grep -q "$DOI" "$OUTPUT_FILE"; then
+    echo "Skipping existing DOI: $DOI in $file" >&2
+    continue
+  fi
+
+  # if grep -q "$DOI" "$BIBTEX_FILE"; then  
+  #   echo "Skipping existing BIBTEX DOI: $DOI in $file" >&2
+  #   continue
+  # fi
+    # Get the print year from CrossRef
+    PRINT_YEAR=$(curl -s "https://doi.crossref.org/servlet/query?pid=jay@literatecomputing.com&id=$DOI" | awk -F'|' '{print $7}')
+
+    # Fetch APA citation and replace the online year with the print year
+    URL="https://citation.doi.org/format?doi=$DOI&style=bibtex&lang=en-US"
+    # RESPONSE=$(curl -s "$URL" | tr '\n' ' ' | tr -s ' ' | sed -E "s/\([0-9]{4}\)/($PRINT_YEAR)/")
+    RESPONSE=$(curl -s "$URL" | sed -E 's/<\/?scp>//g')
+
+    # replace year in RESPONSE with the PRINT_YEAR -- format: year={2023}
+    RESPONSE=$(echo "$RESPONSE" | sed -E "s/year=\{[0-9]{4}\}/year={$PRINT_YEAR}/")
+
+    echo -n "$DOI" >&2
+    if [[ "$RESPONSE" == "DOI not found" ]]; then
+      echo "Problem with $ABS_FILE_PATH: $DOI">&2
+    elif [[ "$RESPONSE" == "DOI is required" ]]; then
+      echo "DOI required for $ABS_FILE_PATH">&2
+    else
+      echo "$RESPONSE" | sed 's/ @article/@article/' | sed 's/&amp;/\&/' >> "$OUTPUT_FILE"
+      echo -n "." >&2
+    fi
+
+done
+
+    echo "Raw bibliography saved to: $OUTPUT_FILE" >&2
+
+    # Check if we're on macOS and use the appropriate JabRef path
+
+
+    "$JABREF_CMD" -n -i "$OUTPUT_FILE" -o "${OUTPUT_FILE%.tmp}.bib" -g 
+
+    echo "Formatted bibliography saved to: ${OUTPUT_FILE%.tmp}.bib" >&2
+
+    
+    # Copy the final .bib file to the original directory
+    cp "$BIBTEX_FILE" "$ORIGINAL_DIR/${DIR_NAME}.bib"
+    echo "Final bibliography copied to: $ORIGINAL_DIR/${DIR_NAME}.bib" >&2
+    BIBTEX_FILE="$ORIGINAL_DIR/${DIR_NAME}.bib"
+  fi
+else
+  echo "No files provided"
+  exit 1
+fi
+
+# Extract BibTeX keys from the file
+KEYS_FILE="$TMP_DIR/${DIR_NAME}-keys.txt"
+awk '/^@Article{/ { 
+    start = index($0, "{") + 1
+    end = index($0, ",")
+    if (start > 1 && end > start) {
+        key = substr($0, start, end - start)
+        print key
+    }
+}' "$BIBTEX_FILE" | sort | uniq > "$KEYS_FILE"
+
+echo "BibTeX keys saved to: $KEYS_FILE" >&2
+
+# Create LaTeX bibliography file in temp directory
+LATEX_FILE="$TMP_DIR/${DIR_NAME}-bibliography.tex"
+echo "Creating LaTeX bibliography file: $LATEX_FILE" >&2
+
+cat > "$LATEX_FILE" << 'EOF'
+\documentclass[paper=a4]{article}
+\usepackage[american]{babel}
+\usepackage{csquotes}
+\usepackage{shortvrb}
+\usepackage{ifthen}
+\usepackage{color}
+\usepackage[retainmissing]{MnSymbol}
+\usepackage[top=2.5cm]{geometry}
+
+% Unicode
+\usepackage{fontspec}
+\setmainfont[Ligatures=TeX]{TeXGyrePagella}
+\setsansfont[Ligatures=TeX]{TexGyreHeros}
+\setmonofont[Ligatures=NoCommon]{TeXGyreCursor}
+\MakeAutoQuote{«}{»}
+\maxdeadcycles=1000
+% Biblatex
+\usepackage[style=apa]{biblatex}
+EOF
+
+# Add the bibliography file reference
+echo "\\addbibresource{${BIBTEX_FILE}}" >> "$LATEX_FILE"
+
+# Continue with the document
+cat >> "$LATEX_FILE" << 'EOF'
+\begin{document}
+EOF
+
+# Add the section title
+echo "\\section{${DIR_NAME} Bibliography}" >> "$LATEX_FILE"
+
+cat >> "$LATEX_FILE" << 'EOF'
+\begin{itemize}
+EOF
+
+# Add each citation
+while read -r key; do
+    echo "\\item\\textcite{$key}" >> "$LATEX_FILE"
+done < "$KEYS_FILE"
+
+cat >> "$LATEX_FILE" << 'EOF'
+\end{itemize}
+\printbibliography
+\end{document}
+EOF
+
+echo "LaTeX bibliography file created: $LATEX_FILE" >&2
+
+# Change to temp directory for LaTeX compilation
+CURRENT_DIR=$(pwd)
+cd "$TMP_DIR" || exit 1
+
+# now run lualatex, biber, lualatex, lualatex (no file extension)
+LATEX_BASENAME="${DIR_NAME}-bibliography"
+lualatex "$LATEX_BASENAME"
+biber "$LATEX_BASENAME"
+lualatex "$LATEX_BASENAME"
+lualatex "$LATEX_BASENAME"
+
+# Copy the final PDF to the original directory
+if [[ -f "${LATEX_BASENAME}.pdf" ]]; then
+    cp "${LATEX_BASENAME}.pdf" "$ORIGINAL_DIR/${DIR_NAME}-bibliography.pdf"
+    echo "Final PDF copied to: $ORIGINAL_DIR/${DIR_NAME}-bibliography.pdf" >&2
+else
+    echo "Warning: PDF was not generated successfully" >&2
+fi
+
+# Return to the directory where the script was called from
+cd "$CURRENT_DIR" || exit 1
