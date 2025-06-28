@@ -1,0 +1,117 @@
+#!/usr/bin/env bash
+# 2025-06-28 not sure this works. . . 
+# take a list of pdf files and rename them according to the DOI
+# Zotero will also rename files according to the DOI, but it uses full author names, year, full title, which is a bit long for my taste
+# Requires pdftotext, jq, and curl. According to Github Copilot, on a Mac, you can install these with brew install poppler jq curl
+# https://support.datacite.org/docs/datacite-doi-display-guidelines suggests that "DOI: 10.1234/5678" is not recommended for displaying DOIs, so maybe we should search for https://doi.org/10. instead of just DOI:
+# This works on virtually every PDF I've downloaded in 2024 and almost none from a decade before.
+# This might be a more rubust way to get the DOI: https?:\/\/.*?doi\.org\/(10\.[0-9]*?\/.*)\s|DOI:?\s?(10\..*?\/.*?)\s
+# It'll find old-style DOIs like DOI: 10.1002/2017GL074677 or new-style DOIs like https://doi.org/10.1002/2017GL074677
+
+# MAC consider test for lesspipe and brew install it if missing
+# brew install lesspipe
+# or use textutil instead of lesspipe
+#      textutil -convert txt -stdout file.pdf | less
+
+
+if [ -z "$CROSSREF_EMAIL" ]; then
+  echo "You must set the CROSSREF_EMAIL environment variable to your email address."
+  echo "See 'Etiquette' in https://www.crossref.org/documentation/retrieve-metadata/rest-api/ for more information."
+  exit 1
+fi
+if ! command -v pdftotext &> /dev/null
+then
+    echo "pdftotext is missing. Please install poppler-utils or on a mac 'brew install poppler'"
+    exit
+fi
+if ! command -v jq &> /dev/null
+then
+    echo "jq is missing. Please install jq or on a mac 'brew install jq'"
+    exit
+fi
+if ! command -v curl &> /dev/null
+then
+    echo "curl is missing. Please install curl or on a mac 'brew install curl'"
+    exit
+fi
+
+
+HTML=false
+
+FILES=()
+
+# Parse options and collect files
+while [[ "$#" -gt 0 ]]; do
+  case "$1" in
+    --html)
+      HTML=true
+      shift
+      ;;
+    *)
+      FILES+=("$1")
+      shift
+      ;;
+  esac
+done
+
+get_doi_from_pdf_file() {
+  local pdf="$1"
+  # pdftotext: get first page of PDF
+  # tr: replace newlines with spaces (sometimes a newline will break the between DOI: and DOI or break DOI into two lines)
+  # sed: replace slash-space with slash (sometimes the DOI is split at the slash which we replaced with a space)
+  # grep: get the line with the DOI (but that's the whole thing?
+  # awk: split the line at DOI:, leaving the DOI and the rest of the line
+  # awk: get just the first word (the DOI)
+#  DOI=$(pdftotext "$pdf" -l 1  -  |tr '\n' ' ' | sed 's|/ |/|' | grep -Poi '10\.\d{4,9}/[a-z0-9/:.]*'|tail -1 )
+  DOI=$(lesspipe "$pdf" |head -30  |tr '\n' ' '| grep -Poi '10\.\d{4,9}/[_a-z0-9/:.]*'|tail -1 )
+  echo $DOI
+}
+
+get_doi_url_from_pdf_file() {
+  local pdf="$1"
+  # pdftotext: get first page of PDF
+  # tr: replace newlines with spaces (sometimes a newline will break the between DOI: and DOI or break DOI into two lines)
+  # sed: replace slash-space with slash (sometimes the DOI is split at the slash which we replaced with a space)
+  # grep: get the line with the DOI (but that's the whole thing?
+  # awk: split the line at DOI:, leaving the DOI and the rest of the line
+  # awk: get just the first word (the DOI)
+  DOI=$(pdftotext "$pdf" -l 1  -  |tr '\n' ' ' | sed 's|/ |/|' | grep -Poi '10\.\d{4,9}/[a-z0-9/:.]*'|tail -1 | awk '{print "https://doi.org/"$1}')
+  echo $DOI
+}
+
+for item in "${FILES[@]}"; do
+  DOI=$(get_doi_from_pdf_file "$item")
+  # NOTE: the citation from doi.org includes the online publication date, not the print publication date
+  # Get the year from the servelet and then replace the year in the citation. ¯\_(ツ)_/¯
+
+  PRINT_YEAR=$(curl -s "https://doi.crossref.org/servlet/query?pid=jay@literatecomputing.com&id=$DOI"| awk -F'|' '{print $7}')
+
+  URL="https://citation.doi.org/format?doi=$DOI&style=apa&lang=en-US"
+  RESPONSE=$(curl -s "$URL"  | tr '\n' ' '| tr -s ' ' | sed -E "s/\([0-9]{4}\)/($PRINT_YEAR)/")
+
+
+  if [[ $HTML == true ]];then
+    RESPONSE=$(echo $RESPONSE |sed -E 's/\. ([A-Z][^.,]+, [0-9]+)\(/\.\ <i>\1<\/i>(/')
+  fi
+
+
+  if [ "$RESPONSE" == "DOI not found" ]; then
+    echo "Problem with $item: $DOI"
+  elif [ "$RESPONSE" == "DOI is required" ]; then
+    echo "DOI required for $item"
+  else
+    echo "$RESPONSE" | sed 's/\&amp;/\&/'
+    echo -n "." >&2
+  fi
+done
+
+# for item in "$@"; do
+#   DOI=$(get_doi_from_pdf_file "$item")
+#   # echo "Got DOI: $DOI"
+#   if ! curl -sLH "Accept: text/x-bibliography; style=apa" "https://doi.org/$DOI"
+#   then
+#     echo "Problem with $@: $DOI"
+#   else
+#     echo -n "." >&2
+#   fi
+# done

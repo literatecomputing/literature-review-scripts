@@ -1,0 +1,59 @@
+#!/usr/bin/env bash
+# get APA citations from a text file with a bunch of DOIs
+# print usage if no files are provided
+if [[ $# -eq 0 ]]; then
+  echo "Usage: $0 [--html] <file1> <file2> ..."
+  echo "Example: $0 --html myfile.txt" 
+  echo -e "\nThis script retrieves APA citations for DOIs found in the provided files.\n"
+  echo "Options:"
+  echo "  --html    Output in HTML format (not implemented yet)"
+  echo "  <file1> <file2> ...  List of files to process"
+  echo "Dependencies: curl, grep, sed, awk"
+  exit 1
+fi
+
+HTML=false
+FILES=()
+
+# Parse options and collect files
+while [[ "$#" -gt 0 ]]; do
+  case "$1" in
+    --html)
+      HTML=true
+      shift
+      ;;
+    *)
+      FILES+=("$1")
+      shift
+      ;;
+  esac
+done
+
+for file in "${FILES[@]}"; do
+  # TODO? Use lesspipe to extract text -- but it doesn't work for txt?
+  TEXT=$(cat "$file" 2>/dev/null)
+
+  # Extract DOI-like strings (10.xxxx/xxxxx) and deduplicate
+  DOIS=$(echo "$TEXT" | grep -Eo '10\.[0-9]+/[A-Za-z0-9._;()/:+-]+' | sed 's/[),.;"]*$//' | sort -u)
+
+  for DOI in $DOIS; do
+    # Get the print year from CrossRef
+    PRINT_YEAR=$(curl -s "https://doi.crossref.org/servlet/query?pid=jay@literatecomputing.com&id=$DOI" | awk -F'|' '{print $7}')
+
+    # Fetch APA citation and replace the online year with the print year
+    URL="https://citation.doi.org/format?doi=$DOI&style=apa&lang=en-US"
+    RESPONSE=$(curl -s "$URL" | tr '\n' ' ' | tr -s ' ' | sed -E "s/\([0-9]{4}\)/($PRINT_YEAR)/")
+
+    # Italicize journal title and year block
+    RESPONSE=$(echo "$RESPONSE" | sed -E 's/\. ([A-Z][^.,]+, [0-9]+)\(/\.\ <i>\1<\/i>(/')
+
+    if [[ "$RESPONSE" == "DOI not found" ]]; then
+      echo "Problem with $file: $DOI"
+    elif [[ "$RESPONSE" == "DOI is required" ]]; then
+      echo "DOI required for $file"
+    else
+      echo "$RESPONSE" | sed 's/&amp;/\&/'
+      echo -n "." >&2
+    fi
+  done
+done
