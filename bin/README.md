@@ -1,3 +1,93 @@
+## See below for doing lit review stuff, but the most useful part of this is renaming a PDF to a normalized name of author, year, and title.
+
+`normalize-filename` and `pdf-make-bibliography` both run on a Mac and can be made a "quick action". The script attempts to fix the
+path and let you know if something is missing and how to fix it.
+
+If you are someone who is good with a Mac and could make these instructions better, I would appreciate knowing how to fix them.
+I've done it twice now, but failed to make very good notes.
+
+This is sort-of what to do.
+
+You need homebrew, pdftotex, and for the bibliography, JabRef and TeX package . First, install https://brew.sh
+
+```
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+brew install poppler
+```
+
+I think that's all that's required for the rename script.
+
+Crossref likes you to provide a real email address in exchange for giving you the DOI data for free. Or they used to. Now I can't find
+anywhere that says that.
+
+To run it from the command line, you'll do something like this:
+
+```
+git clone https://github.com/literatecomputing/literature-review-scripts/
+export CROSSREF_EMAIL='you@youremai.com'
+bin/normalize-filename Downloads/some-pdf-that-is-an-article.pdf
+```
+
+For the normalize-filename script, you should see out put something like this:
+
+```
+ ./literature-review-scripts/bin/normalize-filename ./Downloads/19313152.2014.852426.pdf
+/home/pfaffman/Downloads/19313152.2014.852426.pdf -- Getting https://api.crossref.org/works/10.1080/19313152.2014.852426?mailto=jay@literatecomputing.com
+Renaming: /home/pfaffman/Downloads/19313152.2014.852426.pdf -> /home/pfaffman/Downloads/Macedo 2014 - Multiculturalism Permitted in English Only.pdf
+```
+
+There are other formats that right now require modifying [the script](https://github.com/literatecomputing/literature-review-scripts/blob/main/bin/normalize-filename#L156-L168). Here are some examples:
+
+```
+  author_year_jnl="$year-$author-$short_j"
+  author_year_abbr_title="$year-$author-$abbr_title"
+  author_year_title="$author$year$short_title"
+  year_author_jnl_doi="$year-$author-$short_j-$FILE_DOI"
+  year_author_title_spaces="$year $author $short_title_spaces"
+  author_year_title_spaces="$author $year - $short_title_spaces"
+
+  # choose the one you like and make it be the target_filename
+
+  target_filename="$author_year_title_spaces"
+  target_path="$ITEM_DIR/$target_filename.pdf"
+```
+
+For the Bibliography generator, you need also MacTeX and JabRef. JabRef is a Normal Mac Program you can get the `dmg` from their [installation page](](https://github.com/jabref/jabref/releases/tag).
+
+```
+brew install --cask mactex
+```
+
+Create a Quick Action that runs a script and works for PDF files. It should pass the names as arguments (not as input to the script)
+
+Put something like this in the place that it seems like it should go:
+
+```
+#!/bin/bash
+
+# Set environment variables
+export PATH="/Users/YOURUSER/literature-review-scripts/bin":/opt/homebrew/bin:$PATH
+export CROSSREF_EMAIL='your@email.com'
+
+# Call your script with Automator's input
+"/Users/YOURUSER/literature-review-scripts/bin/normalize-filename" "$@"
+```
+
+The Action for the bibligraphy script is similar. The bibliography script
+
+- gets the references in BibTeX
+- has JabRef make reasonable keys
+- builds a LaTeX file that generates in-text APA citations for all of the references and then prints the bibliography.
+
+The notion is that this would be a good enough start for some copy-paste way that you want to build a bibliography for a paper.
+I always kept my references in bibtex, maintained mostly by hand in Emacs, and never understood why no one else I knew used a reference manager like EndNote or whatever, but maybe that's why I'm a computer consultant now and not an academic.
+
+You can call the `pdftoapa` script with a list of PDFs or a single `bibtex.bib` file (the idea is that you could fix stuff that is wrong in JabRef and then print a clean bibliography).
+
+# Stuff to Download arrticles from various publishers follows.
+
+At some point I should split this stuff out to a separate REPO.
+
 ## Get info from crossref
 
 USER=$CROSSREF_UER \
@@ -58,7 +148,7 @@ get-all-tesq -- also unneeded, not sure if it works.
 
 Status: Works!
 
-Will download all wile journals the list that Constellate generated
+Will download all Wiley journals the list that Constellate generated
 that includes one of the WORDS from all Wiley journals from 5ca9272b-bed8-f648-4089-264539d883a0-sampled-metadata.csv
 which Constellate claims is all of the ones with one of the THREE WORDS in the journals it knows about.
 
