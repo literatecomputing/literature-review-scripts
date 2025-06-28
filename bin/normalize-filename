@@ -3,9 +3,18 @@
 # Zotero will also rename files according to the DOI, but it uses full author names, year, full title, which is a bit long for my taste
 # Requires pdftotext, jq, and curl. According to Github Copilot, on a Mac, you can install these with brew install poppler jq curl
 # https://support.datacite.org/docs/datacite-doi-display-guidelines suggests that "DOI: 10.1234/5678" is not recommended for displaying DOIs, so maybe we should search for https://doi.org/10. instead of just DOI:
-# This works on virtually every PDF I've downloaded in 2024 and almost none from a decade before. 
+# This works on virtually every PDF I've downloaded in 2024 and almost none from a decade before.
 # This might be a more rubust way to get the DOI: https?:\/\/.*?doi\.org\/(10\.[0-9]*?\/.*)\s|DOI:?\s?(10\..*?\/.*?)\s
-# It'll find old-style DOIs like DOI: 10.1002/2017GL074677 or new-style DOIs like https://doi.org/10.1002/2017GL074677 
+# It'll find old-style DOIs like DOI: 10.1002/2017GL074677 or new-style DOIs like https://doi.org/10.1002/2017GL074677
+
+## OMG. Looks like this would have been much, much, simpler this way
+# https://www.crossref.org/documentation/retrieve-metadata/xml-api/using-https-to-query/#00418
+# curl https://doi.crossref.org/servlet/query?pid=$CROSSREF_EMAIL&id=$DOI
+# returns something like:
+# 0026-7902,1540-4781|The Modern Language Journal|Afreen|108|S1|75|2024|full_text||10.1111/modl.12900
+# So then you can just get those PIPE-delimited fields and no json fussing
+
+
 if [ -z "$CROSSREF_EMAIL" ]; then
   echo "You must set the CROSSREF_EMAIL environment variable to your email address."
   echo "See 'Etiquette' in https://www.crossref.org/documentation/retrieve-metadata/rest-api/ for more information."
@@ -26,6 +35,13 @@ then
     echo "curl is missing. Please install curl or on a mac 'brew install curl'"
     exit
 fi
+if [[ "$OSTYPE" == "darwin"* ]]; then
+  # check if brew bin diretory exists and is in path
+  if [[ -d "/opt/homebrew/bin" && ":$PATH:" != *":/opt/homebrew/bin:"* ]]; then
+    export PATH="/opt/homebrew/bin:$PATH"
+  fi
+fi
+
 
 get_doi_from_pdf_file() {
   local pdf="$1"
@@ -35,7 +51,8 @@ get_doi_from_pdf_file() {
   # grep: get the line with the DOI (but that's the whole thing?
   # awk: split the line at DOI:, leaving the DOI and the rest of the line
   # awk: get just the first word (the DOI)
-  pdftotext "$pdf" -l 1  -  |tr '\n' ' ' | sed 's|/ |/|' | grep DOI:| awk -F 'DOI: ' '{print $2}' | awk '{print $1}'
+  DOI=$(pdftotext "$pdf" -l 1  -  |tr '\n' ' ' | sed 's|/ |/|' | grep -Eo '10\.[0-9]{4,9}/[a-zA-Z0-9/:._-]*'|tail -1 )
+  echo $DOI
 }
 
 get_doi_url_from_pdf_file() {
@@ -46,30 +63,115 @@ get_doi_url_from_pdf_file() {
   # grep: get the line with the DOI (but that's the whole thing?
   # awk: split the line at DOI:, leaving the DOI and the rest of the line
   # awk: get just the first word (the DOI)
-  pdftotext "$pdf" -l 1  -  |tr '\n' ' ' | sed 's|/ |/|' | grep DOI:| awk -F 'DOI: ' '{print $2}' | awk '{print "https://doi.org/"$1}'
+  DOI=$(pdftotext "$pdf" -l 1  -  |tr '\n' ' ' | sed 's|/ |/|' | grep -Eo '10\.[0-9]{4,9}/[a-zA-Z0-9/:._-]*'|tail -1 | awk '{print "https://doi.org/"$1}')
+  echo "get_doi_url_from_pdf_file: $DOI"
+  echo $DOI
+}
 
+capitalize_author_name() {
+  local name="$1"
+  # Only capitalize if the name is all uppercase or all lowercase
+  # Preserve mixed case names like "deCosta", "van der Berg", etc.
+  if [[ "$name" =~ ^[A-Z]+$ ]] || [[ "$name" =~ ^[a-z]+$ ]]; then
+    # Convert to title case: first letter uppercase, rest lowercase
+    echo "${name:0:1}$(echo "${name:1}" | tr '[:upper:]' '[:lower:]')"
+  else
+    # Name has mixed case, preserve it
+    echo "$name"
+  fi
 }
 
 for item in "$@"; do
-  DOI=$(get_doi_from_pdf_file "$item")
+  # Get full path for the input file
+  ITEM_ABS_PATH=$(realpath "$item")
+  ITEM_DIR=$(dirname "$ITEM_ABS_PATH")
+  
+  DOI=$(get_doi_from_pdf_file "$ITEM_ABS_PATH")
+  # echo "Got DOI: $DOI"
   FILE_DOI=$(echo $DOI|sed 's|/|_|g')
   echo "$item" -- Getting "https://api.crossref.org/works/$DOI?mailto=$CROSSREF_EMAIL"
   json=$(curl -s "https://api.crossref.org/works/$DOI?mailto=$CROSSREF_EMAIL")
+  if echo "$json" | grep -q "Resource not found."; then
+    echo "$item: $DOI --- not found"
+    continue
+  fi
+
   author=$(echo $json|jq -r '.message.author[0].family')
-  journal=$(echo $json|jq -r '.message."short-container-title" |.[]')
+  if [ -z "$author" ] || [ "$author" = "null" ]; then
+    echo "Failed to extract author"
+    continue
+  fi
+  # Capitalize author name properly
+  # Remove accents from author name
+  author=$(echo "$author" | iconv -f utf-8 -t ascii//TRANSLIT 2>/dev/null)
+  # If iconv failed or didn't transliterate properly, use sed for common accents
+  if [[ "$author" =~ [^[:ascii:]] ]]; then
+    author=$(echo "$author" | sed 'y/àáâãäåæçèéêëìíîïðñòóôõöøùúûüýþÿ/aaaaaaeceeeeiiiidnooooooouuuuyty/' | sed 'y/ÀÁÂÃÄÅÆÇÈÉÊËÌÍÎÏÐÑÒÓÔÕÖØÙÚÛÜÝÞŸ/aaaaaaeceeeeiiiidnooooooouuuuyty/' | sed 's/ć/c/g; s/š/s/g; s/ž/z/g; s/đ/d/g; s/ş/s/g; s/ö/o/g; s/ü/u/g; s/ı/i/g; s/ğ/g/g; s/ç/c/g')
+  fi
+  # Convert to lowercase and remove any remaining non-ASCII
+  author=$(echo "$author" | sed 's/[^[:alnum:]]//g')
+  author=$(capitalize_author_name "$author")
+
+  # journal=$(echo "$json" | jq -r '.message["short-container-title"][0] // .message["container-title"][0]')
+  journal=$(echo "$json" | jq -r '.message["short-container-title"][0] // .message["container-title"][0]')
+
+  if [ -z "$journal" ] || [ "$journal" = "null" ]; then
+    echo "Failed to extract journal"
+    continue
+  fi
   title=$(echo $json|jq -r '.message.title | .[]')
-  # first five words of title
-  short_title=$(echo $title|awk '{print $1, $2, $3, $4, $5 } '|sed 's| |_|g')
+  # Strip HTML tags from title (especially <i> tags for italics)
+  title=$(echo "$title" | sed 's/<[^>]*>/ /g')
+  # strip non alpha numbers from title
+  title=$(echo "$title" | sed 's/[^[:alnum:][:space:]]//g')
+  # make all letters non-accented and lowercase
+  # title=$(echo "$title" | iconv -f utf-8 -t ascii//TRANSLIT | tr '[:upper:]' '[:lower:]')
+  # first five words of title, but stop at colon if present
+  if [[ "$title" == *":"* ]]; then
+    # Extract everything before the first colon
+    title_before_colon="${title%%:*}"
+    short_title=$(echo "$title_before_colon"|awk '{print $1, $2, $3, $4, $5 } '|sed 's| |_|g'|sed 's/_*$//')
+    # alllow only letters and numbers in title
+    
+  else
+    # No colon, use first five words as before
+    short_title=$(echo "$title"|awk '{print $1, $2, $3, $4, $5 } '|sed 's| |_|g'|sed 's/_*$//')
+    short_title_spaces=$(echo $short_title | sed 's/_/ /g')
+  fi
   # first letter of first five words of title (lowercase)
   abbr_title=$(echo "$title" | awk '{for(i=1;i<=5;i++) printf "%s", substr($i,1,1)}' | tr '[:upper:]' '[:lower:]')
   # make short_journal be the first letter of each word in the journal name
   short_j=$(echo $journal|awk '{for(i=1;i<=NF;i++) printf "%s", substr($i,1,1)}')
-  year=$(echo $json|jq -r '.message."journal-issue"."published-print"."date-parts"[0][0]')
-  echo "$item --> $year-$author-$journal-$DOI.pdf"
-  if [[ -f "$year-$author-$short_j-$FILE_DOI.pdf" ]]; then
-    echo "File $year-$author-$short_j-$FILE_DOI.pdf already exists. Skipping $item"
+  bad_year=$(echo $json|jq -r '.message."journal-issue"."published-print"."date-parts"[0][0]')
+  year=$(echo $json|jq -r '
+  .message["published-print"]["date-parts"][0][0] //
+  .message["journal-issue"]["published-print"]["date-parts"][0][0] //
+  .message["published-online"]["date-parts"][0][0] //
+  .message.created["date-parts"][0][0]')
+  if [ -z "$year" ] || [ "$year" = "null" ]; then
+    echo "Failed to extract journal"
     continue
   fi
-  echo "going to rename to '$year-$author-$short_j-$FILE_DOI.pdf'"
-  mv -uvn "$item" "$year-$author-$short_j-$FILE_DOI.pdf"
+
+  author_year_jnl="$year-$author-$short_j"
+  author_year_abbr_title="$year-$author-$abbr_title"
+  author_year_title="$author$year$short_title"
+  year_author_jnl_doi="$year-$author-$short_j-$FILE_DOI"
+  year_author_title_spaces="$year $author $short_title_spaces"
+  author_year_title_spaces="$author $year - $short_title_spaces"
+
+# echo "short title spaces: $short_title_spaces"
+# echo "year author title spaces: $year_author_title_spaces"
+# sleep 5
+
+  target_filename="$author_year_title_spaces"
+  target_path="$ITEM_DIR/$target_filename.pdf"
+  
+  # Check if target file already exists
+  if [[ -f "$target_path" ]]; then
+    echo "Target file already exists: $target_path"
+  else
+    echo "Renaming: $ITEM_ABS_PATH -> $target_path"
+    mv "$ITEM_ABS_PATH" "$target_path"
+  fi
 done
