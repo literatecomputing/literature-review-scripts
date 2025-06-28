@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# give usage if no DOI is provided
+if [ -z "$1" ]; then
+  echo "Usage: $0 <DOI>"
+  echo "Example: $0 10.1007/s00125-020-05002-0"
+  echo -e "\nThis script retrieves the ISSN of a journal using the CrossRef API.\n"
+  echo "Dependencies: jq, curl"
+  exit 1
+fi
+DOI=$1
+ISSN=$(curl https:////api.crossref.org/works/$DOI | jq -r '.message.ISSN[0]')
+echo $ISSN
