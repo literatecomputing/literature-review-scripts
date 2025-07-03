@@ -51,7 +51,7 @@ get_doi_from_pdf_file() {
   # grep: get the line with the DOI (but that's the whole thing?
   # awk: split the line at DOI:, leaving the DOI and the rest of the line
   # awk: get just the first word (the DOI)
-  DOI=$(pdftotext "$pdf" -l 1  -  |tr '\n' ' ' | sed 's|/ |/|' | grep -Eo '10\.[0-9]{4,9}/[a-zA-Z0-9/:._-]*'|tail -1 )
+  DOI=$(pdftotext "$pdf" -l 2  -  |tr '\n' ' ' | sed 's|/ |/|' | grep -Eo '10\.[0-9]{4,9}/[a-zA-Z0-9/:._-]*'|tail -1 )
   echo $DOI
 }
 
@@ -85,7 +85,7 @@ for item in "$@"; do
   # Get full path for the input file
   ITEM_ABS_PATH=$(realpath "$item")
   ITEM_DIR=$(dirname "$ITEM_ABS_PATH")
-  
+
   DOI=$(get_doi_from_pdf_file "$ITEM_ABS_PATH")
   # echo "Got DOI: $DOI"
   FILE_DOI=$(echo $DOI|sed 's|/|_|g')
@@ -132,7 +132,7 @@ for item in "$@"; do
     title_before_colon="${title%%:*}"
     short_title=$(echo "$title_before_colon"|awk '{print $1, $2, $3, $4, $5 } '|sed 's| |_|g'|sed 's/_*$//')
     # alllow only letters and numbers in title
-    
+
   else
     # No colon, use first five words as before
     short_title=$(echo "$title"|awk '{print $1, $2, $3, $4, $5 } '|sed 's| |_|g'|sed 's/_*$//')
@@ -166,7 +166,7 @@ for item in "$@"; do
 
   target_filename="$author_year_title_spaces"
   target_path="$ITEM_DIR/$target_filename.pdf"
-  
+
   # Check if target file already exists
   if [[ -f "$target_path" ]]; then
     echo "Target file already exists: $target_path"
